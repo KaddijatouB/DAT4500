@@ -3,8 +3,7 @@ title: "Analysis"
 author: "Kaddijatou Baldeh"
 date: "2024-04-08"
 output: 
-  html_document: 
-    keep_md: true
+  github_document
 ---
 
 ```{r setup, include=FALSE}
