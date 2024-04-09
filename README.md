@@ -1,4 +1,4 @@
-# DAT4500
+# DAT4500 Data and Society
 
-Seattle Policing Typology
+Catalyzing Policing Reform with Data
 
