@@ -1,0 +1,153 @@
+---
+title: "cluster-analysis"
+author: "Chloe, Marykate, Kaddijatou"
+date: "04/09/2024"
+output: 
+  github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+
+# Note: Before knitting, make sure you"ve installed the packages used in the
+# sections below
+
+packages <- c("knitr", "tidyverse", "readr","devtools", "psych", "cluster", "factoextra",
+              "gridExtra", "grid", "here", "rlang", "sf", "urbnthemes", "mclust",
+              "dbscan", "data.table", "R.utils")
+
+## INSTALL PACKAGES
+packages <- lapply(packages, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    if (x == "urbnthemes") {
+      devtools::install_github("UrbanInstitute/urbnthemes")
+    } else {
+    install.packages(x)
+    }
+    library(x, character.only = TRUE)}})
+
+set_urbn_defaults(style = "print")
+
+```
+
+Source cluster analysis functions 
+```{r}
+# Define trial name for modeling run
+trial_name <- "seattle_arrests"
+
+source("cluster-functions.R")
+source("data_viz_functions.R")
+```
+
+# Read and Pre-Process Data
+
+```{r cars}
+# Load all Seattle data and reporting boundaries data
+SPD_Call_Data <- read_csv("/Users/kaddijatoubaldeh/Documents/Development/DAT4500/Data/SPD_Call_Data_2023.csv")
+SPD_Arrest_Data <- read_csv("/Users/kaddijatoubaldeh/Documents/Development/DAT4500/Data/SPD_Arrest_Data_2023.csv")
+SPD_Crime_Data <- read_csv("/Users/kaddijatoubaldeh/Documents/Development/DAT4500/Data/SPD_Crime_Data__2023.csv")
+SPD_Stops_Data <- read_csv("/Users/kaddijatoubaldeh/Documents/Development/DAT4500/Data/SPD_Stops_Data_2023.csv")
+SPD_Reporting_Boundries <- read_csv("/Users/kaddijatoubaldeh/Documents/Development/DAT4500/Data/SPD_Reporting_Boundries_2023.csv")
+```
+
+
+```{r}
+SPD_Arrest_Data <- SPD_Arrest_Data %>%
+  rename_with(~ gsub(" ", "_", .x), everything()) %
+```
+
+
+```{r}
+arrest_counts_by_race <- SPD_Arrest_Data %>%
+  group_by(Beat, Subject_Race, Precinct) %>%
+  summarize(Arrest_Count = n(), .groups = 'drop')
+
+head(arrest_counts_by_race)
+```
+
+
+```{r}
+# Total arrests 
+arrest_counts_by_race <- SPD_Arrest_Data %>%
+  group_by(Beat, Subject_Race, Precinct) %>%
+  summarize(Arrest_Count = n(), .groups = 'drop')
+
+total_arrests_by_beat <- arrest_counts_by_race %>%
+  group_by(Beat, Precinct) %>%
+  summarize(Total_Arrests = sum(Arrest_Count), .groups = 'drop')
+
+arrest_proportions_by_race <- arrest_counts_by_race %>%
+  left_join(total_arrests_by_beat, by = c("Beat", "Precinct")) %>%
+  mutate(Proportion = Arrest_Count / Total_Arrests)
+
+# Create the ggplot object and assign it to a variable
+arrest_proportions_plot <- ggplot(arrest_proportions_by_race, aes(x = Precinct, y = Proportion, fill = Subject_Race)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme_minimal() +
+  labs(x = "Precinct", y = "Proportion of Arrests", title = "Proportion of Arrests by Race per Precinct") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+# Save the plot
+ggsave(here("images", paste(trial_name, "Proportion of Arrests per Precinct.png", sep = "_")),
+       plot = arrest_proportions_plot, width = 6.5, height = 4.5, units = "in")
+
+```
+
+
+```{r}
+ SPD_Cluster_Data <- arrest_proportions_by_race %>%
+  pivot_wider(names_from = Subject_Race, values_from = Proportion, values_fill = list(Proportion = 0)) %>%
+  mutate(Beat = as.factor(Beat)) 
+
+head(SPD_Cluster_Data)
+```
+
+
+```{r}
+race_columns <- c('American Indian or Alaska Native', 'Asian', 'Black or African American', 'Native Hawaiian or Other Pacific Islander', 'Unknown', 'White')
+
+# Perform k-means clustering on scaled numeric columns only
+SPD_Cluster_Data <- SPD_Cluster_Data %>%
+  mutate(Arrest_Count_Scaled = scale(Arrest_Count))
+
+set.seed(123)
+k <- 6
+cluster_result <- kmeans(select(SPD_Cluster_Data, all_of(race_columns), Arrest_Count_Scaled), centers = k)
+
+# Add the cluster assignments back to the data
+SPD_Cluster_Data$Cluster <- cluster_result$cluster
+
+cluster_plot <- ggplot(SPD_Cluster_Data, aes(x = Beat, y = Arrest_Count, color = factor(Cluster))) +
+  geom_point(size = 4, alpha = 0.6) +
+  theme_minimal() +
+  labs(color = "Cluster", title = "Cluster Assignment by Precinct and Arrest Count")
+
+ggsave(here("images", paste(trial_name, "cluster_map_by_Beat.png", sep = "_")),
+       plot = cluster_plot, width = 10, height = 4.5, units = "in")
+```
+
+
+```{r}
+set_urbn_defaults(style = "map")
+
+# read in reporting district shapefile 
+rd <- st_read("/Users/kaddijatoubaldeh/Documents/Development/DAT4500/Data/SPD Reporting Beats.geojson",
+             stringsAsFactors = FALSE, quiet = TRUE) %>%
+             rename(Beat = beat)
+
+rd2 <- st_read("/Users/kaddijatoubaldeh/Documents/Development/DAT4500/Data/Race_and_Social_Equity_Composite_Index_Current_5634088353558588547.geojson",
+             stringsAsFactors = FALSE, quiet = TRUE) 
+
+rd_combined <- st_join(rd, rd2, by = "geometry")
+
+
+rd_combined <- left_join(rd_combined, SPD_Cluster_Data, by = "Beat")
+
+
+ggplot(data = rd_combined) +
+  geom_sf(aes(fill = as.factor(Cluster))) +  # Fill precincts based on cluster assignment
+  geom_sf_text(aes(label = Beat), check_overlap = TRUE, size = 3, color = "black") +  # Add beat labels
+  labs(title = "Cluster Analysis by Precinct", fill = "Cluster") +
+
+  
+```
