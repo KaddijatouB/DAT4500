@@ -216,8 +216,7 @@ rd2 <- st_read("~/Documents/Development/DAT4500/Data/Race_and_Social_Equity_Comp
              stringsAsFactors = FALSE, quiet = TRUE) 
 
 demographic_map <- ggplot(data = rd2) +
-  geom_sf(aes(fill = RACE_ELL_ORIGINS_QUINTILE)) + # Choose the demographic variable you want to plot
-  labs(title = 'Percent People of Color by Area', fill = '% People of Color') 
+  geom_sf(aes(fill = RACE_ELL_ORIGINS_QUINTILE))
 
 demographic_map
 ```
