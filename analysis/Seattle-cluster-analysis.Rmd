@@ -55,17 +55,18 @@ census2020 <- read_csv("~/Documents/Development/DAT4500/Data/census2020.csv")
 ```{r}
 ## data for census and arrest rates by race 
 
-census2020 <- read_csv("~/Desktop/DAT4500/census2020.csv", 
+census2020 <- read_csv("~/Documents/Development/DAT4500/Data/census2020.csv", 
     col_types = cols(`King County, Washington!!Estimate` = col_skip(), 
         `King County, Washington!!Margin of Error` = col_skip(), 
         `King County, Washington!!Percent` = col_skip(), 
         `King County, Washington!!Percent Margin of Error` = col_skip(), 
         `Seattle city, Washington!!Margin of Error` = col_skip(), 
          `Seattle city, Washington!!Percent Margin of Error` = col_skip()))
- View(census2020)      
- 
+```
 
-SPD_Arrest_Data <- SPD_Arrest_Data_2023 %>%
+
+```{r}
+SPD_Arrest_Data <- SPD_Arrest_Data %>%
   rename_with(~ gsub(" ", "_", .x), everything()) 
 
 arrest_totals_by_race <- SPD_Arrest_Data %>%
@@ -73,12 +74,6 @@ arrest_totals_by_race <- SPD_Arrest_Data %>%
   summarize(Arrest_Count = n(), .groups = 'drop')
 
 head(arrest_totals_by_race)
-```
-
-
-```{r}
-SPD_Arrest_Data <- SPD_Arrest_Data %>%
-  rename_with(~ gsub(" ", "_", .x), everything())
 ```
 
 
@@ -226,7 +221,7 @@ rdBeat <- rd %>%
 
 cluster_map_plot <- ggplot() +
   geom_sf(data = rdBeat, mapping = aes(fill = as.factor(Cluster))) +
-  labs(title = "Arrest Analysis by Precinct", fill = "Cluster") 
+  labs(title = "Arrest Analysis by Beats", fill = "Cluster") 
 
 ggsave(here("images", paste(trial_name, "cluster_map_by_Beat.png", sep = "_")),
        plot = cluster_map_plot, width = 10, height = 4.5, units = "in")
