@@ -61,7 +61,7 @@ census2020 <- read_csv("~/Documents/Development/DAT4500/Data/census2020.csv",
         `King County, Washington!!Percent` = col_skip(), 
         `King County, Washington!!Percent Margin of Error` = col_skip(), 
         `Seattle city, Washington!!Margin of Error` = col_skip(), 
-         `Seattle city, Washington!!Percent Margin of Error` = col_skip()))
+        `Seattle city, Washington!!Percent Margin of Error` = col_skip()))
 ```
 
 
@@ -159,7 +159,7 @@ cluster_plot <- ggplot(SPD_Cluster_Data_Beat, aes(x = Beat, y = Total_Arrests, c
   geom_point(size = 4, alpha = 0.6) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) +
-  labs(color = "Cluster", title = "Cluster Assignment by Beat and Arrest Count")
+  labs(color = "Cluster", title = "Cluster Assignment by Beat and Arrest Count", x = "Arrests Per Beats", y = "Total Arrests")
 
 ggsave(here("images", paste(trial_name, "cluster_Data_by_Beat.png", sep = "_")),
        plot = cluster_plot, width = 10, height = 4.5, units = "in")
@@ -182,7 +182,7 @@ SPD_Cluster_Data_Precinct$Cluster <- cluster_result_precinct$cluster
 cluster_plot_precinct <- ggplot(SPD_Cluster_Data_Precinct, aes(x = Precinct, y = Arrest_Count_Scaled, color = factor(Cluster))) +
   geom_point(size = 4, alpha = 0.6) +
   theme_minimal() +
-  labs(color = "Cluster", title = "Cluster Assignment by Precinct")
+  labs(color = "Cluster", title = "Cluster Assignment by Precinct", y = "Arrests Count")
 
 ggsave(here("images", paste(trial_name, "cluster_Data_by_Precinct.png", sep = "_")), plot = cluster_plot_precinct, width = 10, height = 4.5, units = "in")
 
