@@ -14,7 +14,7 @@ knitr::opts_chunk$set(warning=FALSE, message=FALSE)
 
 packages <- c("knitr", "tidyverse", "readr","devtools", "psych", "cluster", "factoextra",
               "gridExtra", "grid", "here", "rlang", "sf", "urbnthemes", "mclust",
-              "dbscan", "data.table", "R.utils")
+              "dbscan", "data.table", "R.utils", "tidycensus")
 
 ## INSTALL PACKAGES
 packages <- lapply(packages, FUN = function(x) {
@@ -40,92 +40,415 @@ source("data_viz_functions.R")
 ```
 
 # Read and Pre-Process Data
-
+# https://data-seattlecitygis.opendata.arcgis.com/datasets/SeattleCityGIS::racial-and-social-equity-composite-index-current/explore?location=47.614467%2C-122.336904%2C12.00
 ```{r cars}
 # Load all Seattle data and reporting boundaries data
 SPD_Call_Data <- read_csv("~/Documents/Development/DAT4500/Data/SPD_Call_Data_2023.csv")
 SPD_Arrest_Data <- read_csv("~/Documents/Development/DAT4500/Data/SPD_Arrest_Data_2023.csv")
-SPD_Crime_Data <- read_csv("~/Documents/Development/DAT4500/Data/SPD_Crime_Data__2023.csv")
 SPD_Stops_Data <- read_csv("~/Documents/Development/DAT4500/Data/SPD_Stops_Data_2023.csv")
+
 SPD_Reporting_Boundries <- read_csv("~/Documents/Development/DAT4500/Data/SPD_Reporting_Boundries_2023.csv")
-census2020 <- read_csv("~/Documents/Development/DAT4500/Data/census2020.csv")
+
+rd <- st_read("~/Documents/Development/DAT4500/Data/SPD Reporting Beats.geojson",
+             stringsAsFactors = FALSE, quiet = TRUE) %>%
+             rename(Beat = beat)
+
+rd2 <- st_read("~/Documents/Development/DAT4500/Data/Race_and_Social_Equity_Composite_Index_Current_5634088353558588547.geojson",
+             stringsAsFactors = FALSE, quiet = TRUE) 
+```
+
+
+# Census Data API. Your API key is dfac6b112269655f8addde66c2193b92d61b88d7.
+# Documentation on censors api https://walker-data.com/census-r/modeling-us-census-data.html
+
+```{r}
+census_api_key("dfac6b112269655f8addde66c2193b92d61b88d7", install = TRUE, overwrite=TRUE)
+```
+
+
+# https://api.census.gov/data/2020/dec/pl/variables.html
+# Washington GEOID = 53
+# P1_003N: White alone
+# P2_002N: Hispanic 
+# P1_004N: Black or African American alone
+# P1_005N: American Indian and Alaska Native alone
+# P1_006N: Asian alone
+# P1_007N: Native Hawaiian and Other Pacific Islander alone
+# P1_008N: Some Other Race alone
+# P1_009N: Two or More Races
+
+```{r}
+# Load the data for Seattle's population by specific races using 2020 Decennial Census
+seattle_census_data <- get_decennial(
+  geography = "tract",
+  variables = c("P1_003N","P2_002N", "P1_004N", "P1_005N", "P1_006N", "P1_007N", "P1_008N", "P1_009N", "P012002", "P012026"),
+  state = "WA",
+  county = "King",
+  region = "Seattle",
+  year = 2020
+)
+
+head(seattle_census_data)
+```
+# Remane value to population 
+
+```{r}
+seattle_census_data <- seattle_census_data %>%
+  rename(population = value)
+```
+
+# Translate the varibles to the actual race
+
+```{r}
+seattle_census_data <- seattle_census_data %>%
+  mutate(race = recode(variable,
+                       P1_003N = "White",
+                       P1_004N = "Black or African American",
+                       P1_005N = "American Indian or Alaska Native",
+                       P1_006N = "Asian",
+                       P1_007N = "Native Hawaiian or Other Pacific Islander",
+                       P1_008N = "Some Other Race alone", #Some Other Race alone
+                       P1_009N = "Two or More Races",# Two or More Races
+                       P2_002N = "Hispanic or Latino"))
+seattle_census_data
+```
+# Compute total population
+```{r}
+# Group by race and calculate total population
+race_population <- seattle_census_data %>%
+  group_by(race) %>%
+  summarize(total_population = sum(population))
+
+race_population
+```
+
+
+# Merge the census data with the Seattle geographic data
+```{r}
+seattle_census_data <- seattle_census_data  %>%
+  filter(GEOID %in% rd2$GEOID) %>%
+  left_join(rd2[, c("GEOID", "geometry")], by = "GEOID")
+```
+
+# Combine census data 
+```{r}
+# Convert the data to an sf object
+ seattle_census_data <- st_as_sf(seattle_census_data)
+
+seattle_census_data 
+```
+
+```{r}
+# Aggregate population by GEOID and race
+aggregated_census_data <- seattle_census_data %>%
+  group_by(geometry, race) %>%
+  summarise(population = sum(population, na.rm = TRUE), .groups = 'drop') %>%
+  st_cast("MULTIPOLYGON")
+
+
+head(aggregated_census_data)
+
 ```
 
 
 ```{r}
-## data for census and arrest rates by race 
+# Spatial join using st_join which defaults to using st_intersects
+combined_data <- aggregated_census_data  %>%
+  st_join(rd, by = "geometry")
 
-census2020 <- read_csv("~/Documents/Development/DAT4500/Data/census2020.csv", 
-    col_types = cols(`King County, Washington!!Estimate` = col_skip(), 
-        `King County, Washington!!Margin of Error` = col_skip(), 
-        `King County, Washington!!Percent` = col_skip(), 
-        `King County, Washington!!Percent Margin of Error` = col_skip(), 
-        `Seattle city, Washington!!Margin of Error` = col_skip(), 
-        `Seattle city, Washington!!Percent Margin of Error` = col_skip()))
+head(combined_data)
+```
+# group SPD call data by Beats, join SPD call with stop and arrest data
+```{r}
+SPD_Combined_Data <- SPD_Call_Data %>%
+  group_by(Beat) %>%
+  summarise(Calls = n()) %>%
+  left_join(SPD_Arrest_Data %>% group_by(Beat) %>% summarise(Arrests = n()), by = "Beat") %>%
+  replace_na(list(Arrests = 0, Stops = 0)) %>%   left_join(SPD_Stops_Data %>% group_by(Beat) %>% summarise(Stops = n()), by = "Beat") %>% # Replace NA with 0 in case there are no records for some Beats in Arrests or Stops
+  left_join(combined_data)
+write_csv(SPD_Combined_Data, "SPD_Combined_Data.csv")
+
+head(SPD_Combined_Data)
+
 ```
 
+
+# rename variables
 
 ```{r}
 SPD_Arrest_Data <- SPD_Arrest_Data %>%
   rename_with(~ gsub(" ", "_", .x), everything()) 
 
-arrest_totals_by_race <- SPD_Arrest_Data %>%
+SPD_Arrest_Data
+```
+
+```{r}
+SPD_Stops_Data <- SPD_Stops_Data %>%
+  rename_with(~ gsub(" ", "_", .x), everything()) 
+
+SPD_Stops_Data
+```
+
+```{r}
+# Assuming population data is correctly aligned in `race_population`
+# Count stops by perceived race
+stop_counts_by_perceived_race <- SPD_Stops_Data %>%
+  group_by(Subject_Perceived_Race) %>%
+  summarize(Stops_Count = n(), .groups = 'drop')
+
+# Calculate proportions of stops by perceived race
+race_population_stop_proportions <- race_population %>%
+  left_join(stop_counts_by_perceived_race, by = c("race" = "Subject_Perceived_Race")) %>%
+  mutate(Stop_Proportion = Stops_Count / total_population) %>%
+  filter(Stop_Proportion > 0) 
+
+# Plotting
+stop_proportion_plot <- ggplot(race_population_stop_proportions, aes(x = race, y = Stop_Proportion, fill = race)) +
+  geom_col(show.legend = TRUE, position = position_dodge()) +
+  labs(title = "Proportion of Stops by Perceived Race",
+       x = "Race",
+       y = "Proportion of Stops",
+       fill = "Race") +
+  theme_minimal() +
+  geom_text(aes(label = scales::percent(Stop_Proportion, accuracy = 0.1)), vjust = -0.5, position = position_dodge(width = 0.9), check_overlap = TRUE)
+
+# Save the plot
+ggsave(here("images", paste(trial_name, "Proportion_of_Stops_by_Perceived_Race.png", sep = "_")),
+       plot = stop_proportion_plot, width = 13, height = 6.5, units = "in")
+ggsave(here("images", paste(trial_name, "Arrest_Per_Race.png", sep = "_")),
+       plot = arrest_proportion_plot , width = 13, height = 6.5, units = "in")
+# Display the plot
+stop_proportion_plot
+
+```
+
+
+
+```{r}
+Seattle_wide_arrest_counts_by_race <- SPD_Arrest_Data %>%
   group_by(Subject_Race) %>%
   summarize(Arrest_Count = n(), .groups = 'drop')
 
-head(arrest_totals_by_race)
+names(Seattle_wide_arrest_counts_by_race) <- c("race", "Arrest_Count")
+
+Seattle_wide_arrest_counts_by_race
 ```
 
 
-# Arrest Count Per Race
 
 ```{r}
-arrest_counts_by_race <- SPD_Arrest_Data %>%
-  group_by(Beat, Subject_Race, Precinct) %>%
-  summarize(Arrest_Count = n(), .groups = 'drop')
+ race_population_arrest_proportions <- race_population %>%
+  left_join(Seattle_wide_arrest_counts_by_race, by = c("race"))%>%
+   mutate(Arrest_Proportion = Arrest_Count / total_population) %>%
+   filter(Arrest_Proportion > 0) 
 
-head(arrest_counts_by_race)
+race_population_arrest_proportions
+
 ```
 
-
 ```{r}
-# Total arrests 
-arrest_counts_by_race <- SPD_Arrest_Data %>%
-  group_by(Beat, Subject_Race, Precinct) %>%
-  summarize(Arrest_Count = n(), .groups = 'drop')
-
-total_arrests_by_beat <- arrest_counts_by_race %>%
-  group_by(Beat, Precinct) %>%
-  summarize(Total_Arrests = sum(Arrest_Count), .groups = 'drop')
-
-arrest_proportions_by_race <- arrest_counts_by_race %>%
-  left_join(total_arrests_by_beat, by = c("Beat", "Precinct")) %>%
-  mutate(Proportion = Arrest_Count / Total_Arrests)
-
-# Plot for Proportion of Arrests by Race per Precinct
-arrest_proportions_plot_precinct <- ggplot(arrest_proportions_by_race, aes(x = Precinct, y = Proportion, fill = Subject_Race)) +
-  geom_bar(stat = "identity", position = position_dodge()) +
+ arrest_proportion_plot <- ggplot(race_population_arrest_proportions, aes(x = race, y = Arrest_Proportion, fill = race)) +
+  geom_col(show.legend = TRUE, position = position_dodge()) +
+  labs(title = "Proportion of Arrests by Race",
+       x = "Race",
+       y = "Proportion of Arrests",
+       fill = "race") +
   theme_minimal() +
-  labs(x = "Precinct", y = "Proportion of Arrests", title = "Proportion of Arrests by Race per Precinct") +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  geom_text(aes(label = scales::percent(Arrest_Proportion, accuracy = 0.1)), vjust = -0.5, position = position_dodge(width = 0.9), check_overlap = TRUE)
 
-# Plot for Proportion of Arrests by Race per Beat
-arrest_proportions_plot_beat <- ggplot(arrest_proportions_by_race, aes(x = Beat, y = Proportion, fill = Subject_Race)) +
+ggsave(here("images", paste(trial_name, "Arrest_Per_Race.png", sep = "_")),
+       plot = arrest_proportion_plot , width = 13, height = 6.5, units = "in")
+
+arrest_proportion_plot
+```
+
+```{r}
+# Combine the stop and arrest data
+combined_data <- bind_rows(
+  mutate(race_population_stop_proportions, Interaction_Type = "Stops"),
+  mutate(race_population_arrest_proportions, Interaction_Type = "Arrests")
+)
+
+# Ensure the race and proportion fields are named consistently
+combined_data <- combined_data %>%
+  rename(Race = race, Proportion = c(Stop_Proportion, Arrest_Proportion))
+
+# Plotting side-by-side using facets
+combined_plot_facets <- ggplot(combined_data, aes(x = Race, y = Proportion, fill = Race)) +
   geom_bar(stat = "identity", position = position_dodge()) +
+  labs(title = "Proportion of Stops and Arrests by Race", x = "Race", y = "Proportion") +
+  theme_minimal() +
+  geom_text(aes(label = scales::percent(Proportion, accuracy = 0.1)), position = position_dodge(width = 0.9), vjust = -0.5)
+
+# Plotting combined using dodge position
+combined_plot_dodge <- ggplot(combined_data, aes(x = Race, y = Proportion, fill = Interaction_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.75)) +
+  labs(title = "Combined Proportion of Stops and Arrests by Race", x = "Race", y = "Proportion") +
+  theme_minimal() +
+  geom_text(aes(label = scales::percent(Proportion, accuracy = 0.1)), position = position_dodge(width = 0.75), vjust = -0.5)
+
+
+# Display the plot (you can choose which one to display based on your preference or report needs)
+combined_plot_facets
+# or
+combined_plot_dodge
+
+```
+
+```{r}
+arrest_counts_by_race <- SPD_Arrest_Data %>%
+  group_by(Subject_Race, Beat) %>%
+  summarize(Arrest_Count = n(), .groups = 'drop')
+
+names(arrest_counts_by_race) <- c("race", "Beat", "Arrest_Count")
+
+arrest_counts_by_race
+```
+
+```{r}
+population_by_race_and_beat <- combined_data %>%
+  group_by(race, Beat) %>%
+  summarize(Total_Population = sum(population, na.rm = TRUE), .groups = 'drop')
+population_by_race_and_beat 
+```
+
+# Merge arrest counts with population data
+
+```{r}
+arrest_and_population_data <- arrest_counts_by_race %>%
+  left_join(population_by_race_and_beat, by = c("race", "Beat"))
+
+arrest_and_population_data
+```
+
+# Calculate arrest proportions
+
+```{r}
+arrest_and_population_data <- arrest_and_population_data %>%
+  mutate(Arrest_Proportion = Arrest_Count / Total_Population)
+
+# Handle cases where Total_Population is zero to avoid division by zero errors
+arrest_and_population_data <- arrest_and_population_data %>%
+  mutate(Arrest_Proportion = ifelse(Total_Population == 0, NA, Arrest_Proportion))
+
+arrest_and_population_data 
+```
+
+
+```{r}
+ arrest_proportion_plot <- ggplot(arrest_and_population_data, aes(x = Beat, y = Arrest_Proportion, fill = race)) +
+  geom_col(show.legend = TRUE, position = position_dodge()) +
+  labs(title = "Proportion of Arrests by Race per Beat",
+       x = "Beat",
+       y = "Proportion of Arrests",
+       fill = "Race") +
+  theme_minimal() 
+ # geom_text(aes(label = scales::percent(Arrest_Proportion, accuracy = 0.1)), vjust = -0.5, position = position_dodge(width = 0.9), check_overlap = TRUE)
+
+ggsave(here("images", paste(trial_name, "Beat_Proportion_of_Arrests2.png", sep = "_")),
+       plot = arrest_proportion_plot , width = 13, height = 6.5, units = "in")
+
+arrest_proportion_plot
+```
+
+```{r}
+# Check for NA values and handle them
+cluster_data <- arrest_and_population_data %>%
+  group_by(Beat) %>%
+  summarise(
+    White_Arrest_Proportion = mean(Arrest_Proportion[race == "White"], na.rm = TRUE),
+    Black_Arrest_Proportion = mean(Arrest_Proportion[race == "Black or African American"], na.rm = TRUE),
+    Asian_Arrest_Proportion = mean(Arrest_Proportion[race == "Asian"], na.rm = TRUE),
+    Other_Arrest_Proportion = mean(Arrest_Proportion[race == "Some Other Race"], na.rm = TRUE),
+    Total_Arrests = sum(Arrest_Count),
+    .groups = 'drop'
+  ) %>%
+  # Replace NA values with 0 - assuming no data implies no arrests which can be considered as 0 arrest proportion
+  mutate(across(ends_with("Arrest_Proportion"), ~ replace_na(., 0))) %>%
+  mutate(Total_Arrests_Scaled = scale(Total_Arrests))
+
+# View to check the prepared data
+head(cluster_data)
+```
+
+```{r}
+# Scale the data properly
+cluster_data <- cluster_data %>%
+  mutate(Total_Arrests_Scaled = scale(Total_Arrests))
+```
+
+
+```{r}
+set.seed(123)  # Set seed for reproducibility
+k <- 6  # Determine a good value for k; the elbow method is a useful technique
+
+# Clustering, ensuring to select the correct columns
+cluster_result <- kmeans(cluster_data %>% 
+                          select(ends_with("_Arrest_Proportion"), Total_Arrests_Scaled), 
+                          centers = k)
+
+# Assign cluster labels back to the original data
+cluster_data$Cluster <- cluster_result$cluster
+
+# Review the first few entries to see the clustering output
+head(cluster_data)
+
+
+```
+
+```{r}
+# Create a plot to visualize the cluster assignments
+cluster_plot <- ggplot(cluster_data, aes(x = Beat, y = Total_Arrests, color = factor(Cluster))) +
+  geom_point(size = 4, alpha = 0.6) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) +
-  labs(x = "Beat", y = "Proportion of Arrests", title = "Proportion of Arrests by Race per Beat") 
+  labs(color = "Cluster", title = "Cluster Assignment by Beat and Arrest Count", x = "Beat", y = "Total Arrests")
 
-ggsave(here("images", paste(trial_name, "Precinct_Proportion_of_Arrests.png", sep = "_")),
-       plot = arrest_proportions_plot_precinct, width = 13, height = 6.5, units = "in")
+# Save the plot
+ggsave(here("images", paste("cluster_Data_by_Beat.png", sep = "_")),
+       plot = cluster_plot, width = 10, height = 4.5, units = "in")
 
-ggsave(here("images", paste(trial_name, "Beat_Proportion_of_Arrests.png", sep = "_")),
-       plot = arrest_proportions_plot_beat , width = 13, height = 6.5, units = "in")
-
-arrest_proportions_plot_precinct
-arrest_proportions_plot_beat
+cluster_plot
 ```
 
+```{r}
+rdBeat <- rd %>%
+  left_join(cluster_data, by = "Beat")
+
+# Set default map style if using urbnmapr
+set_urbn_defaults(style = "map")
+
+# Create the cluster map
+cluster_map_plot <- ggplot(rdBeat) +
+  geom_sf(aes(fill = as.factor(Cluster)), color = "white", size = 0.1) +  
+  labs(title = "Arrest Analysis by Beats", fill = "Cluster")
+
+# Save the map to a file
+ggsave(here("images", paste(trial_name, "cluster_map_by_Beat.png", sep = "_")),
+       plot = cluster_map_plot, width = 10, height = 4.5, units = "in")
+
+# Display the map
+print(cluster_map_plot)
+
+```
+
+```{r}
+SPD_Stops_Data <- SPD_Stops_Data %>%
+  rename_with(~ gsub(" ", "_", .x), everything()) 
+
+SPD_Stops_Data
+```
+## Compute the proportion of 
+```{r}
+stop_counts_by_race <- SPD_Stops_Data %>%
+  group_by(Subject_Perceived_Race, Beat) %>%
+  summarize(Stops_Count = n(), .groups = 'drop')
+
+stop_counts_by_race
+```
+
+
+# ---------------------------------------------------------------------------------------------------- #
 
 ```{r}
  SPD_Cluster_Data <- arrest_proportions_by_race %>%
@@ -165,6 +488,7 @@ ggsave(here("images", paste(trial_name, "cluster_Data_by_Beat.png", sep = "_")),
        plot = cluster_plot, width = 10, height = 4.5, units = "in")
 
 cluster_plot 
+head(SPD_Cluster_Data_Beat)
 ```
 
 
@@ -193,11 +517,6 @@ cluster_plot_precinct
 
 ```{r}
 set_urbn_defaults(style = "map")
-
-# read in reporting district shapefile 
-rd <- st_read("~/Documents/Development/DAT4500/Data/SPD Reporting Beats.geojson",
-             stringsAsFactors = FALSE, quiet = TRUE) %>%
-             rename(Beat = beat)
 
 rdPrecient <- rd %>%
   left_join(SPD_Cluster_Data_Precinct, by = "Beat")
@@ -231,9 +550,6 @@ cluster_map_plot
 
 
 ```{r}
-rd2 <- st_read("~/Documents/Development/DAT4500/Data/Race_and_Social_Equity_Composite_Index_Current_5634088353558588547.geojson",
-             stringsAsFactors = FALSE, quiet = TRUE) 
-
 demographic_map <- ggplot(data = rd2) +
   geom_sf(aes(fill = RACE_ELL_ORIGINS_QUINTILE))
 
@@ -241,15 +557,5 @@ demographic_map
 ```
 
 
-```{r}
-## calculating proportions need to add in sensus data after the slash so the division is correct 
 
-arr_rate_a <- (arrest_counts_by_race$Subject_Race == "Asian") / sum(data$a_pop_count.2018)
-arr_rate_b <- sum(arrest_counts_by_race$Subject_Race == "Black or African American") / sum(data$b_pop_count.2018)
-arr_rate_w <- sum(arrest_counts_by_race$Subject_Race == "White") / sum(data$w_pop_count.2018)
-arr_rate_u <- sum(arrest_counts_by_race$Subject_Race == "Unknown") / sum(data$h_pop_count.2018)
-arr_rate_hw <- sum(arrest_counts_by_race$Subject_Race == "Native Hawaiian or Other Pacific Islander") / sum(data$h_pop_count.2018)
-arr_rate_an <- sum(arrest_counts_by_race$Subject_Race == "American Indian or Alaska Native") / sum(data$h_pop_count.2018)
-
-```
 
