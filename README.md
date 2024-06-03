@@ -1,7 +1,9 @@
 # Catalyzing Police Activity in Seattle 2023
 
 Chloe White, Marykate Buscher, Kaddijatou Baldeh
+
 SPU DAT 4500: Data and Society 
+
 2024-06-04
 
 ### Abstract
