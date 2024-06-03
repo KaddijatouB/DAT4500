@@ -192,5 +192,4 @@ SPD_Combined_Data <- SPD_Call_Data %>%
 write_csv(SPD_Combined_Data, "SPD_Combined_Data.csv")
 
 head(SPD_Combined_Data)
-
 ```
