@@ -1,13 +1,12 @@
-# DAT4500 Data and Society
+# Catalyzing Police Activity in Seattle 2023
 
-Catalyzing Policing Reform with Data for Seattle
+Chloe White, Marykate Buscher, Kaddijatou Baldeh
+SPU DAT 4500: Data and Society 
+2024-06-04
 
+###Abstract
 
-Beats:
-In Seattle, the city is structured into five geographic areas, each containing a precinct or police station: North, East, South, West, and Southwest. The precinct boundaries align with neighborhood lines and natural geographic features. Each precinct is subdivided into smaller areas called Sectors, totaling 17 across the city. These Sectors are further divided into even smaller sections known as Beats—each Sector has about three Beats. For instance, the Ocean Sector includes Beats O1, O2, and O3. Beats are specific areas within the city that individual patrol officers are assigned to oversee.
+The role of policing in communities has long been a topic of discussion, especially since the protests and rallies regarding policing erupted in 2020. Seattle was one of the many cities that experienced these protests. Research on police activity in Seattle is crucial since patterns can be determined, allowing policymakers and criminal justice experts to identify necessary policies and reforms. This study aims to identify patterns regarding arrests, stops, and calls in Seattle reporting districts for 2023. An additional goal of this study is to identify patterns regarding racial demographics within stops and arrests made by the Seattle Police Department in 2023. To answer these questions, the primary method used was the k-means clustering analysis. A cluster map was created to allow for geographical relationships to be identified. As for identifying patterns between police activity and racial demographics, comparisons were made between rates and population. The study found that downtown Seattle had significantly higher arrests, stops, and calls than other areas. Additional results include significantly higher arrest and stop rates among Black and African Americans compared to their population rate. Discussions need to be facilitated on the police presence in downtown Seattle and the disproportionate police involvement with Black and African Americans.
 
-https://www.seattle.gov/police/information-and-data/data/tweets-by-beat#:~:text=The%20Seattle%20Police%20Department%20is,and%20sirens%20on%20your%20block.
-
-### SPD Arrest Data
-
-
+### Link to final report 
+https://kaddijatoub.github.io/DAT4500/
