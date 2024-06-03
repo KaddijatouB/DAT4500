@@ -1,5 +1,5 @@
 ---
-title: "cluster-analysis"
+title: "data-partial-clean"
 author: "Chloe, Marykate, Kaddijatou"
 date: "04/09/2024"
 output: 
